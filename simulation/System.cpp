@@ -34,7 +34,7 @@ namespace GridMC
       nAB_(0),
       nPolymers_(0),
       nPolymerBeads_(0),
-      nIons_(0),
+      // Parameters only used by charged polymer simulation.
       nNeutralSolvents_(0),
       nSolvents_(0),
       // Parameters only used by charged micelle simulation.
@@ -136,6 +136,13 @@ namespace GridMC
          nSolvents_ += micelleNIons_;
       }
 
+      if (qCode_ == 8) {
+        getline(in, line);
+        if (line.size() <= 0)
+          UTIL_THROW("reading error: charge code 8");
+        sscanf(line.c_str(), "%lf %d %s", &chargeDensity_, &nFreeIons_, comment);
+        nSolvents_ += nFreeIons_;
+      }
       // Read Ewald code.
       getline(in, line);
       if (line.size() <= 0)
@@ -202,6 +209,8 @@ namespace GridMC
       out << "charge code                 " << qCode_ << endl;
       if (qCode_ == 6)
          out << "micelle charge parameter    " << micellePolymerNQ_ << "  " << micelleNIons_ << "  " << micelleIonQ_ << endl;
+      if (qCode_ == 8)
+         out << "charged polymer parameter    " << chargeDensity_ << "  "  << nFreeIons_ << endl;
       out << "Ewald code                  " << useEwald_ << endl;
       if (useEwald_ > 0) ewald_.writeParam(out);
       out << "input config file name      " << configFileName_ << endl;
@@ -220,7 +229,7 @@ namespace GridMC
    */
    void System::allocate()
    {
-      int        i, j;
+      int        i, j, k;
       double     qA, qB;
       Particle*  ptr;
 
@@ -262,6 +271,26 @@ namespace GridMC
             if (nPolymers_ % 2 != 0)
                UTIL_THROW("Number of polymers uneven");
             break;
+         case 8:
+            if (nType_ < 4 && nFreeIons_ > 0)
+             	 UTIL_THROW("Number of particle types is less than 4");
+        	  if (nFreeIons_ % 2 != 0)
+        	   	 UTIL_THROW("Number of free ions is not even");
+        	  if (chargeDensity_ > 1)
+        	     UTIL_THROW("Charge density should no greater than one");
+            chargeDistribution_.resize(nA_ * nPolymers_);
+            for (int i = 0; i < nA_ * nPolymers_; i++) {
+	          	 if(random_.Random()<chargeDensity_){
+                  chargeDistribution_.push_back(-1.0);
+                  chargeCount_++;
+               }
+               else{
+                  chargeDistribution_.push_back(0.0);
+               }
+               // cout << "System.cpp:  chargedistribution:  " << chargeCount_ << "   " << chargeDistribution_.back() << endl;
+            }
+        	  nSolvents_ += chargeCount_;
+            break;
          default:  // Explicit ions.
             if (qCode_ >= 10) {
                nIons_ = qCode_ - 10;
@@ -286,7 +315,8 @@ namespace GridMC
                   UTIL_THROW("invalid charge code");
             }
       }
- 
+     
+     // cout << chargeCount_ << "  " << nPolymerBeads_ << "   " <<nSolvents_ << endl; 
       // Allocate bead array and set molecule pointers.
       beads_.resize(nPolymerBeads_ + nSolvents_);
       for (i = 0; i < nPolymers_; ++i) polymer_.push_back(&(beads_[i*nAB_]));
@@ -467,6 +497,41 @@ namespace GridMC
                ptr = polymer_[i];
                for (j = 1; j < nAB_; j += 2) ptr[j].q = qA;
             }
+            break;
+         // Charged polymer
+         case 8:
+
+            Log::file() << "Assign charges to charged polymers." << endl;
+            
+            k = 0;
+            for (i = 0; i < nPolymers_; ++i) {
+              ptr = polymer_[i];
+              for (j = 0; j < nA_; ++j) {
+                ptr[j].q = chargeDistribution_[k];
+                k++;
+              }
+
+              for (j = nA_; j < nA_ + nB_; ++j ){
+                ptr[j].q = 0.0;
+              }
+            }
+            for (i = 0; i < chargeCount_; i++) {
+              solvent_[i].q = 1.0;
+            }
+            for (i = chargeCount_; i < nFreeIons_ / 2; i++) {
+              solvent_[i].t = 3;
+              solvent_[i].q = -1.0;
+            }
+            for (i = chargeCount_ + nFreeIons_ / 2; i < chargeCount_ + nFreeIons_; i++) {
+              solvent_[i].t = 2;
+              solvent_[i].q = 1.0;
+            }
+
+            for ( i = chargeCount_ + nFreeIons_; i < nSolvents_; i++) {
+              solvent_[i].t = 4;
+              solvent_[i].q = 0.0;
+            }
+            break;
 
          default: // Explicitly specified ions qCode_: > 10 or < 0.
 

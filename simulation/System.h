@@ -179,7 +179,10 @@ namespace GridMC
       int       nIons_, nNeutralSolvents_, nSolvents_;
       int       micellePolymerNQ_, micelleNIons_, micelleIonQ_;
       int       qCode_, useEwald_;
-
+      int       nFreeIons_;
+      int       chargeCount_;
+      vector<double> chargeDistribution_;
+      double    chargeDensity_;
       /// Initial configuration parameter.
       char      configFileName_[200];
 
