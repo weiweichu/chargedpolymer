@@ -10,7 +10,7 @@ cxx=g++ $(cxxflags) -I$(src_dir)
 exe=gmc
 
 cxx=mpicxx $(cxxflags) -I$(src_dir) -DUTIL_MPI
-exe=gmc_p
+#exe=gmc_p
 
 constants=util/Constants
 log=util/Log
