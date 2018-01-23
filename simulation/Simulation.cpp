@@ -160,7 +160,7 @@ namespace GridMC
          if (nEnergyInterval_ > 0) {
             if (iStep_ % nEnergyInterval_ == 0) {
                #ifndef UTIL_MPI
-             echoSystemStatus(Log::file());
+               echoSystemStatus(Log::file());
                #endif
                echoSystemStatus(statusfile);
             }
@@ -328,12 +328,14 @@ namespace GridMC
       if (line.size() <= 0)
          UTIL_THROW("reading error: nEnergyInterval");
       sscanf(line.c_str(), "%d  %s", &nEnergyInterval_, comment);
-      Log::file()<<"nEnergyInterval_:   "<< nEnergyInterval_ << endl;
+
       // Read configuration output interval.
       getline(prmfile, line);
       if (line.size() <= 0)
          UTIL_THROW("reading error: nConfigInterval");
       sscanf(line.c_str(), "%d  %s", &nConfigInterval_, comment);
+      if (nConfigInterval_ > nDielectricInterval_)
+         UTIL_THROW("Improper configuration interval: it should be smaller than dielectric interval");
 
       // Read base diagnosis interval.
       getline(prmfile, line);

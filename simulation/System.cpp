@@ -34,10 +34,7 @@ namespace GridMC
       nAB_(0),
       nPolymers_(0),
       nPolymerBeads_(0),
-      nPositiveblock_(0),
-      nFreeions_(0),
-      ChargeDensity_(0), 
-      nIons_(0),
+      // Parameters only used by charged polymer simulation.
       nNeutralSolvents_(0),
       nSolvents_(0),
       // Parameters only used by charged micelle simulation.
@@ -138,17 +135,14 @@ namespace GridMC
          sscanf(line.c_str(), "%d %d %d %s", &micellePolymerNQ_, &micelleNIons_, &micelleIonQ_, comment);
          nSolvents_ += micelleNIons_;
       }
-      
+
       if (qCode_ == 8) {
-         getline(in, line);
-         if (line.size() <= 0)
-            UTIL_THROW("reading error: charge code8");
-         sscanf(line.c_str(), "%lf %d %s", &ChargeDensity_, &nFreeions_, comment);}
-      if (qCode_ == 9) {
-	getline(in, line);
-	if (line.size() <= 0)
-	   UTIL_THROW("readint error: charge code");
-	sscanf(line.c_str(), "%lf %d %s", &ChargeDensity_, &nFreeions_, comment);}
+        getline(in, line);
+        if (line.size() <= 0)
+          UTIL_THROW("reading error: charge code 8");
+        sscanf(line.c_str(), "%lf %d %s", &chargeDensity_, &nFreeIons_, comment);
+        nSolvents_ += nFreeIons_;
+      }
       // Read Ewald code.
       getline(in, line);
       if (line.size() <= 0)
@@ -216,9 +210,8 @@ namespace GridMC
       if (qCode_ == 6)
          out << "micelle charge parameter    " << micellePolymerNQ_ << "  " << micelleNIons_ << "  " << micelleIonQ_ << endl;
       if (qCode_ == 8)
-         out << "charged block parameter    " << ChargeDensity_  << "  " << nFreeions_ << "  " << endl;
-      if (qCode_ == 9)
-	 out << "charged-neutral block copolymer parameter    " << ChargeDensity_ << "  " << nFreeions_ << "  " << endl;
+         out << "charged polymer parameter    " << chargeDensity_ << "  "  << nFreeIons_ << endl;
+      out << "Ewald code                  " << useEwald_ << endl;
       if (useEwald_ > 0) ewald_.writeParam(out);
       out << "input config file name      " << configFileName_ << endl;
       out << "random generator seed       " << seed_ << endl;
@@ -236,7 +229,7 @@ namespace GridMC
    */
    void System::allocate()
    {
-      int        i, j;
+      int        i, j, k;
       double     qA, qB;
       Particle*  ptr;
 
@@ -278,24 +271,26 @@ namespace GridMC
             if (nPolymers_ % 2 != 0)
                UTIL_THROW("Number of polymers uneven");
             break;
-         case 8: //charged diblock copolymers
-            if (nType_ < 4 && nFreeions_ > 0)
-              UTIL_THROW("Number of particle types is less than 4");
-            if (nFreeions_ % 2 != 0)
-	      UTIL_THROW("Number of free ions is not even");
-	   // if ((nNeutralSolvents_ + 1000) <  int(ChargeDensity_ * nAB_* nPolymers_))
-	     // UTIL_THROW("Number of solvents is not adequate as counterions");
+         case 8:
+            if (nType_ < 4 && nFreeIons_ > 0)
+             	 UTIL_THROW("Number of particle types is less than 4");
+        	  if (nFreeIons_ % 2 != 0)
+        	   	 UTIL_THROW("Number of free ions is not even");
+        	  if (chargeDensity_ > 1)
+        	     UTIL_THROW("Charge density should no greater than one");
+            chargeDistribution_.resize(nA_ * nPolymers_);
+            for (int i = 0; i < nA_ * nPolymers_; i++) {
+	          	 if(random_.Random()<chargeDensity_){
+                  chargeDistribution_.push_back(-1.0);
+                  chargeCount_++;
+               }
+               else{
+                  chargeDistribution_.push_back(0.0);
+               }
+               // cout << "System.cpp:  chargedistribution:  " << chargeCount_ << "   " << chargeDistribution_.back() << endl;
+            }
+        	  nSolvents_ += chargeCount_;
             break;
-	case 9: //charged neutral copolymers
-	    if (nType_ < 4 && nFreeions_ > 0)
-		UTIL_THROW("Number of particle types is less than 4");
-	    if (nFreeions_ % 2 != 0)
-		UTIL_THROW("Number of free ions is not even");
-	    if (ChargeDensity_ > nA_)
-		UTIL_THROW("More than one charge on one polymer bead");
-	    if (nNeutralSolvents_ < ChargeDensity_ * nPolymers_)
-		UTIL_THROW("Number of solvents is not adequate as counterions");
-	    break;
          default:  // Explicit ions.
             if (qCode_ >= 10) {
                nIons_ = qCode_ - 10;
@@ -320,7 +315,8 @@ namespace GridMC
                   UTIL_THROW("invalid charge code");
             }
       }
- 
+     
+     // cout << chargeCount_ << "  " << nPolymerBeads_ << "   " <<nSolvents_ << endl; 
       // Allocate bead array and set molecule pointers.
       beads_.resize(nPolymerBeads_ + nSolvents_);
       for (i = 0; i < nPolymers_; ++i) polymer_.push_back(&(beads_[i*nAB_]));
@@ -495,124 +491,48 @@ namespace GridMC
          case 7:
 
             Log::file() << "Assign charges to alternatingly charged polymers." << endl;
+
             for (i = 0; i < nPolymers_; ++i) {
                qA = (i < nPolymers_/2 ? 1.0 : -1.0);
                ptr = polymer_[i];
                for (j = 1; j < nAB_; j += 2) ptr[j].q = qA;
             }
-         // Charged diblock copolymers.
-	case 8:{
-           int chargecount = 0;
-           int counti = 0;
-           Log::file() << ChargeDensity_ << " charge densit" << endl;
-	   Log::file() << "Assign charges onto polymer chains" << endl;
-	   for (i = 0; i< nPolymers_; ++i) {
-              ptr = polymer_[i];
-	      for(j = 0; j< nA_; ++j) {
-		 if(random_.Random()<ChargeDensity_){
-                     ptr[j].q = 1.0;
-                     chargecount++;
-                     counti ++;
-                   }
-                 else{
-                   //  Log::file()<<"ptr.q=0"<<endl;
-                     ptr[j].q = 0.0;
-                     counti++;}
-           }
-           }
-          for (i = 0; i<nPolymers_;++i){
-              ptr = polymer_[i];
-               for(j = 0; j <nB_; j++){
-                   ptr[j+nA_].q = 0.0;
-                }
-          }
-         //  nNeutralSolvent_ = chargecount + nFreeions_;
-           for(i = 0; i< chargecount; ++i) {
-               solvent_[i].q = -1.0;
-               solvent_[i].t = 3;}
-           if(nFreeions_ > 0){
-           for(i = 0; i < nFreeions_/2; i++){
-               solvent_[i+chargecount].q = 1.0;
-               solvent_[i+chargecount].t = 4;}
-           for(i = 0; i < nFreeions_/2; i++){
-               solvent_[i+chargecount+nFreeions_/2].q = -1.0;
-               solvent_[i+chargecount+nFreeions_/2].t = 3;}}
-           else{
-               Log::file()<<"No Freeions"<< endl;}
-           Log::file()<< "chargecount  " << chargecount << "count   "<<counti<< endl;}
-         //  for(i = 0; i < chargecount; i++){
-           //    Log::file()<< solvent_[i].q<< "   "<<solvent_[i].t<<endl;}}
-           
-	   break;
+            break;
+         // Charged polymer
+         case 8:
 
-         case 9:
-        {
-	    Log::file()<< "Assign charges on to charged-neutral polymer chains." << endl;
-            float unit = float(1.0/nA_);
-            //cout << "unit  " << unit << endl;
-            int bead_count[32] ={};
-            int ranbead = int(random_.Random()/unit);
-           // cout << ranbead << endl;
-            for (j = 0; j < nPolymers_; j++){
-		ptr = polymer_[j];
-                for(i = 0; i < nA_; i++){
-		    bead_count[i] = 0;
-		    ptr[i].q = 0.0;}
-                for (i = 0; i < int(ChargeDensity_); i++){
-             //       cout << bead_count[ranbead] << endl;
-                    while(bead_count[ranbead]==1){
-	            ranbead = int(random_.Random()/unit);}
-	            bead_count[ranbead]=1;
-	            ptr[ranbead].q = 1.0;
-		    }
-		for(i = 0; i < nB_; i++){
-		    ptr[i+nA_].q = 0.0;}
-	    }
-      	   // int spacei = (nA_ /2 > ChargeDensity_? (nA_ / ChargeDensity_):(nA_/(nA_ - ChargeDensity_)));
-	   // for (i = 0; i < nPolymers_; ++i) {
-	//	ptr = polymer_[i];
-	//	for (j = 0; j < nA_ ;++j){
-	//	   if (ChargeDensity_ < nA_/2){
-	//	       qA = ( j % (spacei+1) ? 0.0 : 1.0);}
-	//	   else if (ChargeDensity_ == nA_/2){
-          //             qA = ( j % spacei ? 0.0 : 1.0);}
-	//	   else if (ChargeDensity_ > nA_/2){
-	//	       qA = ( j % (spacei+1) ? 1.0 : 0.0);}
-	//	   ptr[j].q = qA;
-	//	}
-	  //      for (j = 0; j < nB_ ; ++j){
-	//	   ptr[j+nA_].q = 0.0;
-	 //       }
-	  // }
-           Log::file()<<"charges on polymer chain 1." << endl;
-	   ptr = polymer_[0];
-	   for (j = 0; j < nAB_; ++j){
-		Log::file()<<j<<"   "<<ptr[j].t<<"   "<<ptr[j].q<<endl;
-	   }
-	   Log::file()<<"Assign polymer charges successfully." << endl;
-           if(nSolvents_ > 0){
-           Log::file()<<"Assign charges to neutral solvents" << endl; 
-	   for (i = 0; i < int(ChargeDensity_) * nPolymers_ ;++i){
-		solvent_[i].q = 0.0;
-		solvent_[i].t = 2;}
-           }
-	   Log::file()<<"Assign charges to counter ions successfully." << endl;
-	   if (nFreeions_ > 0){
-	   Log::file()<<"Start assign charges to free ions" << endl;
-	   for (i = nA_ * nPolymers_; i < nA_ * nPolymers_ + nFreeions_/2 ; ++i ){
-		solvent_[i].q = 1.0;
-                solvent_[i].t = 3;}
-	   for (i = nA_ * nPolymers_ + nFreeions_/2; i < nA_ * nPolymers_ + nFreeions_ ; ++i){
-		solvent_[i].q = -1.0;
-		solvent_[i].t = 2;}
-	   }
-	   else{
-		Log::file()<<"No free ions in the system."<<endl;
-	   }
-	   }
-	   Log::file()<< "Charged signed successfully "<<endl;
-	   break;
-		   
+            Log::file() << "Assign charges to charged polymers." << endl;
+            
+            k = 0;
+            for (i = 0; i < nPolymers_; ++i) {
+              ptr = polymer_[i];
+              for (j = 0; j < nA_; ++j) {
+                ptr[j].q = chargeDistribution_[k];
+                k++;
+              }
+
+              for (j = nA_; j < nA_ + nB_; ++j ){
+                ptr[j].q = 0.0;
+              }
+            }
+            for (i = 0; i < chargeCount_; i++) {
+              solvent_[i].q = 1.0;
+            }
+            for (i = chargeCount_; i < nFreeIons_ / 2; i++) {
+              solvent_[i].t = 3;
+              solvent_[i].q = -1.0;
+            }
+            for (i = chargeCount_ + nFreeIons_ / 2; i < chargeCount_ + nFreeIons_; i++) {
+              solvent_[i].t = 2;
+              solvent_[i].q = 1.0;
+            }
+
+            for ( i = chargeCount_ + nFreeIons_; i < nSolvents_; i++) {
+              solvent_[i].t = 4;
+              solvent_[i].q = 0.0;
+            }
+            break;
+
          default: // Explicitly specified ions qCode_: > 10 or < 0.
 
             Log::file() << "Assign charges to ions and polyelectrolytes." << endl;
@@ -766,23 +686,6 @@ namespace GridMC
       int      i, j, k;
       const Particle *ptr;
       Vector   dr, rcm, rshift;
-     // if (qCode_ == 9) {
-//	for( i = 0; i < nPolymers_; ++i){
-//	   ptr = &(beads_[i*nAB_]);
-  //         rChain[0] = ptr[0].r;
-//
-//	for (j = 0; j < nAB_; ++j) {
-//	   out.setf(ios::left, ios::adjustfield);
-//	   out << setw(2) << ptr[j].t;
-//	   out.unsetf(ios::adjustfield);
-//	   out << setw(15) << rChain[j][0];
-//	   out << setw(15) << rChain[j][1];
-//	   out << setw(15) << rChain[j][2] << endl;
-//	}
-//	}
-  //      }
-      
-    //  else{
 
       for (i = 0; i < nPolymers_; ++i) {
          ptr = &(beads_[i*nAB_]);
@@ -810,7 +713,6 @@ namespace GridMC
             out << setw(15) << rChain[j][2] << endl;
          }
       }
-      //}
 
       // Write solvent position.
       ptr = &(beads_[nPolymerBeads_]);
